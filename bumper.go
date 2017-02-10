@@ -24,7 +24,6 @@ var (
 	commitRange string
 	trackerKey  string
 	projectID   int
-	verbose     bool
 	reStoryID   = regexp.MustCompile(`\[#(\d+)\]`)
 )
 
@@ -69,7 +68,7 @@ func main() {
 
 	// figure out ranges default to master..release-elect
 	flag.Parse()
-	printfVerbose("Bumping the following range of commits: %s\n\n", extraRed(commitRange))
+	fmt.Printf("Bumping the following range of commits: %s\n\n", extraRed(commitRange))
 
 	// collect all commits to check
 	cmd := exec.Command("git", "log", "--pretty=format:%H", commitRange)
@@ -83,7 +82,7 @@ func main() {
 
 	// bail out early if we have nothing to bump to
 	if len(commits) == 0 {
-		printlnVerbose("There are no commits to bump!")
+		fmt.Println("There are no commits to bump!")
 		return
 	}
 
@@ -124,9 +123,9 @@ func main() {
 		if c.StoryName == "" {
 			storyName = prince(randomPrinceQuote())
 		}
-		printlnVerbose(mark, yellow(c.Hash[:8]), grey(subject), blue(storyID), grey(storyName))
+		fmt.Println(mark, yellow(c.Hash[:8]), grey(subject), blue(storyID), grey(storyName))
 	}
-	printlnVerbose()
+	fmt.Println()
 
 	// reverse the commits before we find the bump commit
 	reversed := make([]*Commit, len(commits))
@@ -138,15 +137,12 @@ func main() {
 	// find bump commit and output it
 	bumpHash := findBump(commits)
 	if bumpHash == "" {
-		printlnVerbose("There are no commits to bump!")
+		fmt.Println("There are no commits to bump!")
 		return
 	}
-	printfVerbose("This is the commit you should bump to: ")
-	if verbose {
-		fmt.Println(extraRed(bumpHash))
-		return
-	}
-	fmt.Println(bumpHash)
+
+	fmt.Println("This is the commit you should bump to: ")
+	fmt.Println(extraRed(bumpHash))
 }
 
 func getCommits(r io.Reader) []*Commit {
@@ -299,18 +295,6 @@ func padRight(str, pad string, lenght int) string {
 	}
 }
 
-func printlnVerbose(s ...interface{}) {
-	if verbose {
-		fmt.Println(s...)
-	}
-}
-
-func printfVerbose(s string, x ...interface{}) {
-	if verbose {
-		fmt.Printf(s, x...)
-	}
-}
-
 func red(s string) string {
 	return "\033[38;5;202m" + s + "\033[0m"
 }
@@ -357,11 +341,5 @@ func init() {
 		"commit-range",
 		"master..release-elect",
 		"Specifies the commit range to consider bumping.",
-	)
-	flag.BoolVar(
-		&verbose,
-		"verbose",
-		false,
-		"Output all the information.",
 	)
 }
