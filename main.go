@@ -1,40 +1,28 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/wfernandes/bumper/colors"
+	"github.com/wfernandes/bumper/gitter"
 )
 
 var (
 	commitRange string
 	trackerKey  string
 	projectID   int
-	reStoryID   = regexp.MustCompile(`\[#(\d+)\]`)
 )
-
-type Commit struct {
-	Hash    string
-	Subject string
-	// TODO: use a pointer to story here vs denormalizing
-	StoryID   int
-	StoryName string
-	Accepted  bool
-}
 
 type Story struct {
 	ID    int    `json:"id"`
@@ -68,29 +56,19 @@ func main() {
 
 	// figure out ranges default to master..release-elect
 	flag.Parse()
-	fmt.Printf("Bumping the following range of commits: %s\n\n", extraRed(commitRange))
+
+	git := gitter.New(
+		gitter.WithCommitRange(commitRange),
+	)
 
 	// collect all commits to check
-	cmd := exec.Command("git", "log", "--pretty=format:%H", commitRange)
-	out := &bytes.Buffer{}
-	cmd.Stdout = out
-	err = cmd.Run()
+	err = git.Start()
 	if err != nil {
-		log.Fatalf("Unable to run command: %s", err)
-	}
-	commits := getCommits(out)
-
-	// bail out early if we have nothing to bump to
-	if len(commits) == 0 {
 		fmt.Println("There are no commits to bump!")
 		return
 	}
 
-	// get subjects
-	getSubjects(commits)
-
-	// parse story ids
-	getStoryIDs(commits)
+	commits := git.Commits()
 
 	// in parallel check those commits against the tracker api
 	isAccepted(commits)
@@ -103,12 +81,12 @@ func main() {
 		}
 	}
 	for _, c := range commits {
-		mark := red("✗")
+		mark := colors.Red("✗")
 		if c.Accepted {
-			mark = green("✓")
+			mark = colors.Green("✓")
 		}
 		if c.StoryID == 0 {
-			mark = prince("✓")
+			mark = colors.Prince("✓")
 		}
 		subject := c.Subject
 		if len(subject) > 50 {
@@ -117,18 +95,24 @@ func main() {
 		subject = padRight(subject, " ", maxSubject)
 		storyID := strconv.Itoa(c.StoryID)
 		if c.StoryID == 0 {
-			storyID = prince(getDancer())
+			storyID = colors.Prince(getDancer())
 		}
 		storyName := c.StoryName
 		if c.StoryName == "" {
-			storyName = prince(randomPrinceQuote())
+			storyName = colors.Prince(randomPrinceQuote())
 		}
-		fmt.Println(mark, yellow(c.Hash[:8]), grey(subject), blue(storyID), grey(storyName))
+		fmt.Println(
+			mark,
+			colors.Yellow(c.Hash[:8]),
+			colors.Grey(subject),
+			colors.Blue(storyID),
+			colors.Grey(storyName),
+		)
 	}
 	fmt.Println()
 
 	// reverse the commits before we find the bump commit
-	reversed := make([]*Commit, len(commits))
+	reversed := make([]*gitter.Commit, len(commits))
 	for i, c := range commits {
 		reversed[len(commits)-1-i] = c
 	}
@@ -142,63 +126,10 @@ func main() {
 	}
 
 	fmt.Println("This is the commit you should bump to: ")
-	fmt.Println(extraRed(bumpHash))
+	fmt.Println(colors.ExtraRed(bumpHash))
 }
 
-func getCommits(r io.Reader) []*Commit {
-	commits := make([]*Commit, 0)
-	br := bufio.NewReader(r)
-	for {
-		bytes, _, err := br.ReadLine()
-		if err != nil {
-			break
-		}
-		commit := &Commit{Hash: string(bytes)}
-		commits = append(commits, commit)
-	}
-	return commits
-}
-
-func getSubjects(commits []*Commit) {
-	for _, c := range commits {
-		cmd := exec.Command("git", "show", "--no-patch", "--pretty=format:%s", c.Hash)
-		out := &bytes.Buffer{}
-		cmd.Stdout = out
-		err := cmd.Run()
-		if err != nil {
-			log.Fatalf("Unable to run command: %s", err)
-		}
-		c.Subject = out.String()
-	}
-}
-
-func getStoryIDs(commits []*Commit) {
-	for _, c := range commits {
-		cmd := exec.Command("git", "show", "--no-patch", "--pretty=format:%B", c.Hash)
-		out := &bytes.Buffer{}
-		cmd.Stdout = out
-		err := cmd.Run()
-		if err != nil {
-			log.Fatalf("Unable to run command: %s", err)
-		}
-		c.StoryID = getStoryID(out.String())
-	}
-}
-
-func getStoryID(body string) int {
-	result := reStoryID.FindStringSubmatch(body)
-	if len(result) < 2 {
-		return 0
-	}
-	storyID := result[1]
-	id, err := strconv.Atoi(storyID)
-	if err != nil {
-		return 0
-	}
-	return id
-}
-
-func isAccepted(commits []*Commit) {
+func isAccepted(commits []*gitter.Commit) {
 	const urlTemplate = "https://www.pivotaltracker.com/services/v5/projects/%d/stories?%s"
 
 	// build filter
@@ -249,7 +180,7 @@ func isAccepted(commits []*Commit) {
 	}
 }
 
-func findBump(commits []*Commit) string {
+func findBump(commits []*gitter.Commit) string {
 	invalid := make(map[int]bool)
 	firstUnaccepted := -1
 	bumpHash := ""
@@ -293,34 +224,6 @@ func padRight(str, pad string, lenght int) string {
 			return str[0:lenght]
 		}
 	}
-}
-
-func red(s string) string {
-	return "\033[38;5;202m" + s + "\033[0m"
-}
-
-func extraRed(s string) string {
-	return "\033[38;5;222m" + s + "\033[0m"
-}
-
-func green(s string) string {
-	return "\033[38;5;82m" + s + "\033[0m"
-}
-
-func blue(s string) string {
-	return "\033[1;34m" + s + "\033[0m"
-}
-
-func yellow(s string) string {
-	return "\033[33m" + s + "\033[0m"
-}
-
-func grey(s string) string {
-	return "\033[38;5;242m" + s + "\033[0m"
-}
-
-func prince(s string) string {
-	return "\033[38;5;92m" + s + "\033[0m"
 }
 
 var dancerToggle bool
